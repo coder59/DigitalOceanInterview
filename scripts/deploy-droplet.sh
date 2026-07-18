@@ -7,6 +7,18 @@ cd "$APP_DIR"
 
 echo "==> Deploying go-ingestion-api in $APP_DIR"
 
+# Small droplets (512MB) OOM during `go build` without swap.
+if ! swapon --show | grep -q .; then
+  echo "==> Enabling 2G swap for Docker builds"
+  if [ ! -f /swapfile ]; then
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    chmod 600 /swapfile
+    mkswap /swapfile
+    grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
+  swapon /swapfile || true
+fi
+
 if command -v docker >/dev/null 2>&1; then
   if docker compose version >/dev/null 2>&1; then
     COMPOSE=(docker compose)

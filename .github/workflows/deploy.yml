@@ -34,10 +34,25 @@ jobs:
     name: Deploy via SSH
     needs: test
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Require deploy secrets
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+          KEY: ${{ secrets.DROPLET_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          [ -n "${HOST:-}" ] || { echo "Missing secret DROPLET_HOST"; missing=1; }
+          [ -n "${USER:-}" ] || { echo "Missing secret DROPLET_USER"; missing=1; }
+          [ -n "${KEY:-}" ] || { echo "Missing secret DROPLET_SSH_KEY"; missing=1; }
+          if [ "$missing" -ne 0 ]; then
+            echo "Add secrets under Settings → Secrets and variables → Actions (see .env.example)" >&2
+            exit 1
+          fi
 
       - name: Start ssh-agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -91,20 +106,37 @@ jobs:
       - name: Smoke test public URL
         env:
           BASE_URL: ${{ secrets.DROPLET_URL }}
+          HOST: ${{ secrets.DROPLET_HOST }}
         run: |
           set -euo pipefail
-          if [ -z "${BASE_URL:-}" ]; then
-            echo "DROPLET_URL secret not set — skipping public smoke test"
-            exit 0
-          fi
-          echo "Checking $BASE_URL/health"
+          BASE_URL="${BASE_URL:-http://$HOST}"
+          echo "Smoke testing $BASE_URL"
           for i in $(seq 1 30); do
             if curl -fsS "$BASE_URL/health" | grep -q healthy; then
-              curl -fsS "$BASE_URL/health"
-              echo
-              exit 0
+              break
             fi
             sleep 2
+            if [ "$i" -eq 30 ]; then
+              echo "Public health check failed" >&2
+              exit 1
+            fi
           done
-          echo "Public health check failed" >&2
-          exit 1
+          curl -fsS "$BASE_URL/health"; echo
+          curl -fsS "$BASE_URL/api/v1/pool"; echo
+          RESP=$(curl -fsS -X POST "$BASE_URL/api/v1/ingest" \
+            -H 'Content-Type: application/json' \
+            -d '["gha-smoke-1","gha-smoke-2"]')
+          echo "$RESP"
+          BID=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin)["batch_id"])')
+          for i in $(seq 1 30); do
+            ST=$(curl -fsS "$BASE_URL/api/v1/ingest/batches/$BID")
+            echo "$ST"
+            echo "$ST" | grep -q '"status":"completed"' && break
+            sleep 1
+            if [ "$i" -eq 30 ]; then
+              echo "Batch did not complete" >&2
+              exit 1
+            fi
+          done
+          curl -fsS "$BASE_URL/api/v1/ingest/batches/$BID/results"; echo
+          echo "Smoke OK"

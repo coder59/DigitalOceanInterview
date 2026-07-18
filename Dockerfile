@@ -11,7 +11,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /api-service ./cmd/api
+# Cap parallelism so the Go compiler fits on small (512MB) droplets with swap.
+ENV GOMAXPROCS=1
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /api-service ./cmd/api
 
 # Stage 2: runtime
 FROM scratch
