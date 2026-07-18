@@ -23,7 +23,8 @@ func (e *Engine) scheduleRetry(item plane.WorkItem, delay time.Duration, cause e
 	}
 	item.Attempts++
 	item.RetryAt = time.Now().Add(delay)
-	log.Printf("dp: prompt %s → retry queue (attempt %d) sleep %s cause=%v", item.ID, item.Attempts, delay, cause)
+	log.Printf("dp: prompt id=%s batch=%s prompt=%q → retry queue (attempt %d) sleep %s cause=%v",
+		item.ID, item.BatchID, truncatePrompt(item.Prompt, 120), item.Attempts, delay, cause)
 
 	select {
 	case e.retryQueue <- item:

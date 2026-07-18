@@ -3,6 +3,7 @@ package dataplane
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"go-ingestion-api/internal/external"
@@ -117,6 +118,9 @@ func (e *Engine) runWorker(ctx context.Context) {
 func (e *Engine) processAll(ctx context.Context, items []plane.WorkItem) []plane.WorkItem {
 	out := make([]plane.WorkItem, 0, len(items))
 	for _, item := range items {
+		log.Printf("dp: processing prompt id=%s batch=%s attempts=%d prompt=%q",
+			item.ID, item.BatchID, item.Attempts, truncatePrompt(item.Prompt, 120))
+
 		if err := e.limiter.Wait(ctx); err != nil {
 			e.scheduleRetry(item, defaultRetrySleep, err)
 			continue
@@ -125,6 +129,8 @@ func (e *Engine) processAll(ctx context.Context, items []plane.WorkItem) []plane
 		encoded, err := e.api.Process(ctx, item.Prompt)
 		if err == nil {
 			item.Inference = encoded
+			log.Printf("dp: processed prompt id=%s batch=%s ok inference=%q",
+				item.ID, item.BatchID, truncatePrompt(encoded, 64))
 			out = append(out, item)
 			continue
 		}
@@ -135,4 +141,11 @@ func (e *Engine) processAll(ctx context.Context, items []plane.WorkItem) []plane
 		e.scheduleRetry(item, delay, err)
 	}
 	return out
+}
+
+func truncatePrompt(s string, max int) string {
+	if max < 1 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
