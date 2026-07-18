@@ -56,8 +56,7 @@ func (c *MockClient) Process(ctx context.Context, prompt string) (string, error)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	time.Sleep(60 * time.Second)
-	fmt.Printf("sleeping for 60 seconds")
+
 	c.mu.Lock()
 	now := time.Now()
 	if now.Sub(c.windowStart) >= c.window {
