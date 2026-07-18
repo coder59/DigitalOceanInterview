@@ -1,0 +1,7 @@
+# Go build context ignores
+.git
+.tools
+**/*_test.go
+internal/e2e
+*.md
+.DS_Store

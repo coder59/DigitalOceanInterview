@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Unit tests
+        run: go test ./internal/plane/ ./internal/controlplane/ ./internal/dataplane/ ./internal/db/ ./internal/external/ -count=1
+
+      - name: Build binary
+        run: CGO_ENABLED=0 go build -o /tmp/api-service ./cmd/api

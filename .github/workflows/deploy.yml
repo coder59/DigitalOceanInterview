@@ -1,0 +1,110 @@
+name: Deploy to DigitalOcean Droplet
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /opt/go-ingestion-api
+
+jobs:
+  test:
+    name: Test before deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Unit tests
+        run: go test ./internal/plane/ ./internal/controlplane/ ./internal/dataplane/ ./internal/db/ ./internal/external/ -count=1
+
+      - name: Build binary
+        run: CGO_ENABLED=0 go build -o /tmp/api-service ./cmd/api
+
+  deploy:
+    name: Deploy via SSH
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
+
+      - name: Add droplet to known_hosts
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          PORT: ${{ secrets.DROPLET_PORT }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          PORT="${PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync files to droplet
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+          PORT: ${{ secrets.DROPLET_PORT }}
+          REMOTE_DIR: ${{ secrets.DROPLET_APP_DIR }}
+        run: |
+          set -euo pipefail
+          PORT="${PORT:-22}"
+          REMOTE_DIR="${REMOTE_DIR:-$APP_DIR}"
+          ssh -p "$PORT" "$USER@$HOST" "sudo mkdir -p '$REMOTE_DIR' && sudo chown -R \$USER:\$USER '$REMOTE_DIR'"
+          rsync -az --delete \
+            -e "ssh -p $PORT" \
+            --exclude '.git/' \
+            --exclude '.tools/' \
+            --exclude 'bin/' \
+            --exclude 'internal/e2e/' \
+            --exclude '.github/' \
+            ./ "$USER@$HOST:$REMOTE_DIR/"
+
+      - name: Run remote deploy script
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          USER: ${{ secrets.DROPLET_USER }}
+          PORT: ${{ secrets.DROPLET_PORT }}
+          REMOTE_DIR: ${{ secrets.DROPLET_APP_DIR }}
+        run: |
+          set -euo pipefail
+          PORT="${PORT:-22}"
+          REMOTE_DIR="${REMOTE_DIR:-$APP_DIR}"
+          ssh -p "$PORT" "$USER@$HOST" \
+            "cd '$REMOTE_DIR' && chmod +x scripts/*.sh && APP_DIR='$REMOTE_DIR' bash scripts/deploy-droplet.sh"
+
+      - name: Smoke test public URL
+        env:
+          BASE_URL: ${{ secrets.DROPLET_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "DROPLET_URL secret not set — skipping public smoke test"
+            exit 0
+          fi
+          echo "Checking $BASE_URL/health"
+          for i in $(seq 1 30); do
+            if curl -fsS "$BASE_URL/health" | grep -q healthy; then
+              curl -fsS "$BASE_URL/health"
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Public health check failed" >&2
+          exit 1
