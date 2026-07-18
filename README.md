@@ -339,6 +339,8 @@ Exponential backoff (capped), preferring a larger `Retry-After` from the mock AP
 
 ## Persistence model
 
+Database: **`ingest_db`** (PostgreSQL 16). Tables are created by GORM AutoMigrate in `internal/db/postgres.go`.
+
 ```
   successful flush (one or more WorkItems)
               |
@@ -349,6 +351,49 @@ Exponential backoff (capped), preferring a larger `Retry-After` from the mock AP
      (id, batch_id, prompt,           JSON per batch_id
       processed_b64, ...)
 ```
+
+### Database schema
+
+#### `prompts` — one row per successful prompt
+
+| Column | Type | Notes |
+|--------|------|--------|
+| `id` | `uuid` | Primary key (prompt id) |
+| `batch_id` | `uuid` | Indexed; ingest batch |
+| `prompt` | `text` | NOT NULL — original text |
+| `processed_b64` | `text` | NOT NULL — mock inference (`base64`) |
+| `created_at` | `timestamptz` | Default `CURRENT_TIMESTAMP` |
+
+```sql
+CREATE TABLE prompts (
+  id            uuid PRIMARY KEY,
+  batch_id      uuid,
+  prompt        text NOT NULL,
+  processed_b64 text NOT NULL,
+  created_at    timestamptz DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_prompts_batch_id ON prompts (batch_id);
+```
+
+#### `inference_compilations` — one JSON document per batch
+
+| Column | Type | Notes |
+|--------|------|--------|
+| `batch_id` | `uuid` | Primary key |
+| `result_json` | `jsonb` | NOT NULL — compiled inferences |
+| `count` | `bigint` | NOT NULL — number of inferences |
+| `updated_at` | `timestamptz` | Default `CURRENT_TIMESTAMP` |
+
+```sql
+CREATE TABLE inference_compilations (
+  batch_id    uuid PRIMARY KEY,
+  result_json jsonb NOT NULL,
+  count       bigint NOT NULL,
+  updated_at  timestamptz DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### `result_json` shape
 
 ```json
 {
@@ -448,6 +493,13 @@ until curl -sS "$BASE_URL/api/v1/ingest/batches/$BID" | grep -q '"status":"compl
 curl -sS "$BASE_URL/api/v1/ingest/batches/$BID/results"; echo
 ```
 
+### Python smoke test
+
+```bash
+python3 scripts/test_api.py
+python3 scripts/test_api.py --base-url http://157.245.246.228
+```
+
 Expected shapes:
 
 - Health: `{"plane":"control","status":"healthy"}`
@@ -470,7 +522,7 @@ Expected shapes:
 - `.github/workflows/deploy.yml` — SSH deploy to DigitalOcean droplet
 - `docker-compose.yaml` — postgres + api + nginx
 - `Dockerfile` / `nginx.conf` / `Makefile`
-- `scripts/compose-smoke.sh` / `scripts/deploy-droplet.sh`
+- `scripts/compose-smoke.sh` / `scripts/deploy-droplet.sh` / `scripts/test_api.py`
 
 ---
 
