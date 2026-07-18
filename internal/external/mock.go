@@ -33,10 +33,12 @@ type MockClient struct {
 	window         time.Duration
 	windowStart    time.Time
 	count          int
+	processDelay   time.Duration // artificial latency so clients can observe "processing"
 }
 
 // NewMockClient creates a rate-limited mock external API.
 // Example: NewMockClient(5, time.Second) allows 5 calls/second, then 429.
+// Default per-call delay is 2ms (tests); use WithProcessDelay for a visible demo delay.
 func NewMockClient(limitPerWindow int, window time.Duration) *MockClient {
 	if limitPerWindow < 1 {
 		limitPerWindow = 1
@@ -48,7 +50,17 @@ func NewMockClient(limitPerWindow int, window time.Duration) *MockClient {
 		limitPerWindow: limitPerWindow,
 		window:         window,
 		windowStart:    time.Now(),
+		processDelay:   2 * time.Millisecond,
 	}
+}
+
+// WithProcessDelay sets how long each successful Process call sleeps (simulates inference work).
+func (c *MockClient) WithProcessDelay(d time.Duration) *MockClient {
+	if d < 0 {
+		d = 0
+	}
+	c.processDelay = d
+	return c
 }
 
 // Process base64-encodes the prompt, or returns a 429 rate-limit error.
@@ -74,11 +86,14 @@ func (c *MockClient) Process(ctx context.Context, prompt string) (string, error)
 	c.count++
 	c.mu.Unlock()
 
-	// Simulate a small amount of external work.
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case <-time.After(2 * time.Millisecond):
+	// Simulate external inference latency (configurable for demos / observability).
+	delay := c.processDelay
+	if delay > 0 {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
 	}
 
 	return base64.StdEncoding.EncodeToString([]byte(prompt)), nil

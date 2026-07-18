@@ -22,6 +22,8 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://postgres:securepassword@postgres:5432/ingest_db?sslmode=disable
+      # Per-prompt mock inference delay so poll status stays "processing" longer.
+      MOCK_PROCESS_DELAY: 500ms
     depends_on:
       postgres:
         condition: service_healthy

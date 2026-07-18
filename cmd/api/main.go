@@ -62,7 +62,16 @@ func main() {
 	}
 
 	// --- Data plane: does inference, 429 retry, persistence ---
-	mockAPI := external.NewMockClient(5, time.Second)
+	processDelay := 500 * time.Millisecond
+	if v := os.Getenv("MOCK_PROCESS_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			log.Fatalf("invalid MOCK_PROCESS_DELAY %q: %v", v, err)
+		}
+		processDelay = d
+	}
+	mockAPI := external.NewMockClient(5, time.Second).WithProcessDelay(processDelay)
+	log.Printf("mock API process delay=%s (set MOCK_PROCESS_DELAY to change)", processDelay)
 	limiter := dataplane.NewLeakyBucket(8, 4)
 	dp := dataplane.NewEngine(workQueue, dataplane.Config{
 		MaxWorkers:     5,
