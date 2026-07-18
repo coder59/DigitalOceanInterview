@@ -12,6 +12,7 @@ Clients upload a JSON array of prompts (up to 1000). The control plane acks imme
 - [Rate limiting & 429 backoff](#rate-limiting--429-backoff)
 - [Persistence model](#persistence-model)
 - [API](#api)
+- [Public BASE_URL & testing](#public-base_url--testing)
 - [Project layout](#project-layout)
 - [Local development](#local-development)
 - [Docker Compose](#docker-compose)
@@ -392,6 +393,66 @@ Exponential backoff (capped), preferring a larger `Retry-After` from the mock AP
 ```json
 {"status":"accepted","batch_id":"...","total":2,"plane":"control"}
 ```
+
+---
+
+## Public BASE_URL & testing
+
+Live DigitalOcean droplet (nginx on port 80):
+
+```bash
+BASE_URL=http://157.245.246.228
+```
+
+| | |
+|--|--|
+| Public IP | `157.245.246.228` |
+| Private IP | `10.116.0.2` (VPC only; not used by clients) |
+| Edge | Nginx → API `:8080` |
+
+### Curl examples
+
+```bash
+# Health
+curl -sS "$BASE_URL/health"
+
+# Pool stats (job / retry queue depths)
+curl -sS "$BASE_URL/api/v1/pool"
+
+# Ingest prompts (immediate 202 + batch_id)
+curl -sS -X POST "$BASE_URL/api/v1/ingest" \
+  -H 'Content-Type: application/json' \
+  -d '["hello","world"]'
+
+# Same ingest as objects
+curl -sS -X POST "$BASE_URL/api/v1/ingest" \
+  -H 'Content-Type: application/json' \
+  -d '[{"prompt":"hello"},{"prompt":"world"}]'
+
+# Poll batch status (replace BATCH_ID)
+curl -sS "$BASE_URL/api/v1/ingest/batches/BATCH_ID"
+
+# Compiled results
+curl -sS "$BASE_URL/api/v1/ingest/batches/BATCH_ID/results"
+```
+
+### Ingest → wait → results (one-liner)
+
+```bash
+BASE_URL=http://157.245.246.228
+BID=$(curl -sS -X POST "$BASE_URL/api/v1/ingest" \
+  -H 'Content-Type: application/json' \
+  -d '["hello","world"]' | python3 -c 'import sys,json; print(json.load(sys.stdin)["batch_id"])')
+echo "batch_id=$BID"
+until curl -sS "$BASE_URL/api/v1/ingest/batches/$BID" | grep -q '"status":"completed"'; do sleep 1; done
+curl -sS "$BASE_URL/api/v1/ingest/batches/$BID/results"; echo
+```
+
+Expected shapes:
+
+- Health: `{"plane":"control","status":"healthy"}`
+- Ingest: `{"status":"accepted","batch_id":"…","total":2,"plane":"control"}`
+- Results: `{"batch_id":"…","count":2,"inferences":[…],"updated_at":"…"}`
 
 ---
 
